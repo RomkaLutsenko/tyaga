@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://tyaga:tyaga@localhost:5432/tyaga?schema=public
+      HUSKY: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,8 +27,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-        env:
-          HUSKY: "0"
       - run: node scripts/build-pages.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
