@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: tyaga
+      POSTGRES_PASSWORD: tyaga
+      POSTGRES_DB: tyaga
+    volumes:
+      - tyaga_pg:/var/lib/postgresql
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+
+volumes:
+  tyaga_pg:

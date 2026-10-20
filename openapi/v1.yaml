@@ -1,0 +1,124 @@
+openapi: 3.0.3
+info:
+  title: Tyaga catalog API
+  version: 0.1.0
+servers:
+  - url: /
+paths:
+  /v1/config:
+    get:
+      summary: Public access mode and flags
+      responses:
+        "200":
+          description: Config
+  /v1/age/confirm:
+    post:
+      summary: Issue an anonymous age token
+      responses:
+        "200":
+          description: JWT without a subject
+        "401":
+          description: Invalid Telegram signature in telegram_only mode
+  /v1/catalog/meta:
+    get:
+      summary: Categories, brands, tags and filter counts
+      parameters:
+        - $ref: "#/components/parameters/AgeToken"
+      responses:
+        "200":
+          description: Meta
+          headers:
+            ETag:
+              schema: { type: string }
+        "403":
+          description: age_gate_required
+  /v1/products:
+    get:
+      summary: Catalog page
+      parameters:
+        - $ref: "#/components/parameters/AgeToken"
+        - { name: q, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: brand, in: query, schema: { type: string } }
+        - { name: tags, in: query, schema: { type: string } }
+        - { name: tagMode, in: query, schema: { type: string, enum: [any, all] } }
+        - { name: strength, in: query, schema: { type: string } }
+        - { name: pack, in: query, schema: { type: string } }
+        - { name: nicotineType, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string, enum: [relevance, name, brand] } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 50 } }
+      responses:
+        "200":
+          description: Product cards
+  /v1/products/{id}:
+    get:
+      summary: Product card
+      parameters:
+        - $ref: "#/components/parameters/AgeToken"
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Card without price or image
+  /v1/products/{id}/similar:
+    get:
+      summary: Similar products
+      parameters:
+        - $ref: "#/components/parameters/AgeToken"
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Up to 6 cards
+  /v1/recommendations:
+    post:
+      summary: Stateless survey ranking
+      parameters:
+        - $ref: "#/components/parameters/AgeToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category]
+              properties:
+                category: { type: string }
+                tags: { type: array, items: { type: string } }
+                unwantedTags: { type: array, items: { type: string } }
+                attributes: { type: object, additionalProperties: { type: string } }
+                cursor: { type: string }
+                limit: { type: integer }
+      responses:
+        "200":
+          description: Ranked cards
+  /v1/events:
+    post:
+      summary: Anonymous daily counters
+      parameters:
+        - { name: X-Age-Token, in: header, schema: { type: string } }
+      responses:
+        "200":
+          description: Accepted
+  /webhooks/telegram:
+    post:
+      summary: Bot webhook
+      parameters:
+        - { name: X-Telegram-Bot-Api-Secret-Token, in: header, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Accepted
+components:
+  parameters:
+    AgeToken:
+      name: X-Age-Token
+      in: header
+      required: true
+      schema: { type: string }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: {}

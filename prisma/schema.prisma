@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+generator zod {
+  provider = "zod-prisma-types"
+  output   = "../src/shared/generated/zod"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Category {
+  id              String    @id @default(cuid())
+  code            String    @unique
+  name            String
+  enabled         Boolean   @default(true)
+  attributeSchema Json      @map("attribute_schema")
+  weights         Json
+  sortOrder       Int       @default(0) @map("sort_order")
+  brands          Brand[]
+  products        Product[]
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("categories")
+}
+
+model Brand {
+  id             String    @id @default(cuid())
+  name           String
+  nameNormalized String    @map("name_normalized")
+  categoryId     String    @map("category_id")
+  category       Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  products       Product[]
+
+  @@unique([categoryId, name])
+  @@map("brands")
+}
+
+model Product {
+  id             String       @id @default(cuid())
+  skuCode        String       @unique @map("sku_code")
+  categoryId     String       @map("category_id")
+  category       Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  brandId        String       @map("brand_id")
+  brand          Brand        @relation(fields: [brandId], references: [id], onDelete: Restrict)
+  name           String
+  nameNormalized String       @map("name_normalized")
+  description    String       @default("")
+  attributes     Json
+  active         Boolean      @default(true)
+  tags           ProductTag[]
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  @@index([categoryId, brandId])
+  @@map("products")
+}
+
+model Tag {
+  id       String       @id @default(cuid())
+  code     String       @unique
+  name     String
+  group    String
+  products ProductTag[]
+
+  @@map("tags")
+}
+
+model ProductTag {
+  productId String  @map("product_id")
+  tagId     String  @map("tag_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@index([tagId])
+  @@map("product_tags")
+}
+
+model EventCounter {
+  date     DateTime @db.Date
+  event    String
+  category String   @default("")
+  platform String
+  count    Int      @default(0)
+
+  @@id([date, event, category, platform])
+  @@map("event_counters")
+}

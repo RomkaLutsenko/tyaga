@@ -1,0 +1,212 @@
+---
+description: FSD × Next.js App Router + scalable backend (Prisma/Zod/API), TanStack Query, Jotai, RHF, Tailwind, Framer Motion
+alwaysApply: true
+---
+
+# FSD + Next.js App Router (новый стек)
+
+```
+app (Next) → views → widgets → features → entities → shared
+```
+
+| Concern | Технология |
+|---------|------------|
+| Backend / БД | свой API + PostgreSQL + **Prisma** (БД только на сервере) |
+| Zod из БД-модели | **zod-prisma-types** (генерация из `schema.prisma`) |
+| Серверный стейт (клиент) | TanStack Query → **только HTTP API** |
+| Клиентский стейт | Jotai |
+| Формы / валидация | React Hook Form + Zod (**derived от generated**) |
+| Стили | Tailwind CSS |
+| Анимации | Framer Motion |
+| Роутинг | Next.js App Router |
+| Долгие задачи | очередь / воркер (пока — правило «не в обычном HTTP») |
+
+**Не использовать:** Redux, RTK, RTK Query, SCSS modules как база стилей, `react-router`, FSD-слой в `src/pages`.
+
+---
+
+## Масштабируемый бэкенд — жёсткий контракт
+
+```
+[Кнопка / Feature UI]
+    → TanStack Query (HTTP)
+        → app/api/**/route.ts  (тонкий вход)
+            → server service / server function
+                → Zod parse (generated / derived)
+                    → Prisma
+                        → PostgreSQL
+```
+
+| Правило | Смысл |
+|---------|--------|
+| БД только сервер | Postgres/Prisma недоступны из кнопок, client features, widgets, views UI |
+| page.tsx только показывает | Нет бизнес-логики, Prisma, Zod-parse для записи, расчётов домена |
+| Логика в сервисах | Отдельные server-функции/сервисы; route handler / page лишь вызывают их |
+| Zod перед записью | Любой create/update/delete в БД — только после успешного Zod-parse |
+| Клиент → только API | TanStack Query ходит в HTTP API, никогда «напрямую в базу» |
+| Тяжёлые задачи | Отчёты, огромные загрузки — не в обычном request/response; позже очередь/воркер |
+
+### Расположение
+
+```
+prisma/schema.prisma                      # SoT моделей БД
+src/shared/generated/zod/                 # OUTPUT zod-prisma-types (read-only)
+src/shared/api/prisma.ts                  # PrismaClient — SERVER ONLY (+ server-only)
+
+src/app/api/**/route.ts                   # тонкий HTTP-вход (parse request → service)
+src/server/                               # ИЛИ co-located *Service.ts рядом с доменом
+  (services|*)                            # бизнес-логика + Prisma; без React
+
+# альтернатива FSD-friendly (предпочтительно для домена):
+src/entities|features/<X>/server/         # server-only сервисы сущности/фичи
+```
+
+После изменения моделей: миграция (если нужна) + `prisma generate`.
+
+---
+
+## 4. ЖЁСТКОЕ АРХИТЕКТУРНОЕ ПРАВИЛО (Architectural Rules for Cursor)
+
+### При создании новой фичи СТРОГО ЗАПРЕЩЕНО
+
+- Импортировать из другого слайса мимо `index.ts` (deep import в `model/`, `ui/`, `api/`).
+- Импортировать слой **выше** текущего (`features` → `widgets`/`views`; `entities` → `features`; `shared` → что угодно выше).
+- Использовать абсолютный `@/layer/MySlice/...` **внутри** того же `MySlice` (только relative).
+- Класть бизнес-логику, вызовы API, form-схемы фич, `useQuery`/`useMutation` в `shared` (кроме `shared/api`, `shared/api/prisma.ts`, `shared/generated/zod`) или раздувать `app/providers` сверх composition (`QueryClientProvider`, Jotai `Provider` и т.п.).
+- Писать бизнес-логику, Prisma, Zod-parse записи, доменные расчёты в `app/**/page.tsx` — страница **только показывает** (тонкий import view / RSC composition).
+- Вызывать Prisma / трогать PostgreSQL из кнопок, client features, widgets, views UI, `'use client'` модулей.
+- Импортировать `shared/api/prisma` / server services в client bundle (без `server-only` границы).
+- Создавать FSD-экраны в `src/pages` — только `src/views`.
+- Писать толстые `page.tsx` / толстые `route.ts` с Prisma-вызовами «в лоб» без service-слоя (route — тонкий вход).
+- Ходить в сеть через «голый» `fetch` / `axios.create` в фиче — только клиент из `shared/api` + функции в `*/api` (TanStack Query).
+- Обходить API и «ходить в базу напрямую» с клиента (Server Actions к Prisma из UI-кнопки без API/service-границы — тоже запрещены как паттерн доступа к БД из фичи).
+- Писать в БД **без** предварительного Zod-parse (схемы из `zod-prisma-types` / derived).
+- Редактировать вручную `src/shared/generated/zod`.
+- Дублировать руками Zod-схему модели 1-в-1 с Prisma — только `pick` / `omit` / `extend` / `merge`.
+- Класть серверные сущности / ответы API в Jotai как source of truth (для этого TanStack Query).
+- Дублировать правила валидации формы вне Zod (`zodResolver`).
+- Хардкодить пользовательские строки в JSX (i18n).
+- Импортировать `testing.ts` из production-кода.
+- Дублировать path-константы вне `shared/const/router.ts` (`getRoute*`).
+- Использовать `react-router*`; тащить `next/headers` / server-only в client features/widgets.
+- Выполнять тяжёлые долгие задачи (большие отчёты, огромные загрузки, массовый recompute) синхронно в обычном HTTP request/response — только постановка в очередь / воркер (пока: не реализовывать «в лоб» в handler).
+- Возвращать Redux / RTK / RTK Query / `StateSchema` / `DynamicModuleLoader`.
+- Разводить SCSS modules вместо Tailwind без причины.
+
+### При создании новой фичи СТРОГО ТРЕБУЕТСЯ
+
+- Модели и **base** Zod — `prisma/schema.prisma` + `zod-prisma-types` + `prisma generate`.
+- **БД трогает только сервер:** Prisma только в server services / server-функциях.
+- **Клиент ходит только в API** через TanStack Query (`useQuery` / `useMutation` → HTTP).
+- **Перед любой записью в БД** — `schema.parse` / `safeParse` (generated или derived Zod).
+- **page.tsx только показывает:** максимум вызвать server-функцию для чтения данных для RSC и отрендерить view; без доменной логики внутри файла.
+- Доменная логика — в отдельных **server services / server-функциях** (`*/server` или `src/server`); `route.ts` тонко: request → service → Response.
+- Создавать слайс через `npm run generate:slice -- <features|entities|views> <sliceName>` (экраны — `views`; `widgets`/`shared` — вручную с сегментацией).
+- Экспортировать наружу **только** через корневой `index.ts` (client Public API не реэкспортирует Prisma/server).
+- Для серверного стейта на клиенте: api-функция + key factory + `queryOptions` / `useQuery` / `useMutation` в `entities|features/*/api`.
+- Для клиентского UI-стейта: Jotai atoms в `model/atoms`.
+- Для форм: derived Zod в `model/schemas` + `useForm` + `zodResolver` + submit через `useMutation` → API.
+- Для экранов: `src/views/*` + тонкий `src/app/.../page.tsx` + `getRoute*` + при auth/roles — `middleware.ts`.
+- Тяжёлые задачи: проектировать как async job (очередь/воркер); в API — принять задачу / вернуть job id, не блокировать ответ минутами.
+- Стили — Tailwind; анимации — Framer Motion в UI.
+- Alias `@/...`; stories + unit; e2e для сценариев; моки фронта — MSW/fixtures (не Postgres в unit UI).
+- Default — RSC; `'use client'` на границе Query / RHF / Jotai / Motion.
+
+---
+
+### Пошаговый алгоритм
+
+#### A. Новый слайс (`features` / `entities` / `views`)
+
+1. `npm run generate:slice -- features myFeature` (или `entities` / `views`).
+2. Сегменты: `model/types`, `model/schemas` (derived), `model/atoms`, client `api/` (TanStack), `ui/`; при серверной логике — `server/` (services, `server-only`).
+3. Public API `index.ts` — только client-safe экспорт; server не утекает в UI.
+4. `testing.ts` — только тесты.
+5. i18n + stories + unit.
+6. Подключение: entity → feature → widget/view → thin `page.tsx` + `getRoute*` + middleware / Sidebar.
+
+#### B. Новый эндпоинт (клиент Query + серверный service)
+
+1. **Server service** (`entities|features/X/server/` или `src/server/`):  
+   input → **Zod parse** → Prisma → результат. Без React.
+2. Тонкий `src/app/api/.../route.ts`: достать body/query → вызвать service → `NextResponse`.
+3. Клиент: `src/{features|entities}/X/api/xApi.ts` + key factory + `useQuery` / `useMutation` через `shared/api` (HTTP).
+4. Мутации на клиенте — `invalidateQueries` / `setQueryData`.
+5. Реэкспорт client-хуков из `index.ts` при необходимости.
+6. Storybook/unit — MSW; контракт = HTTP API.
+
+#### C. Новая форма (RHF + Zod + Mutation → API)
+
+1. Модель в `schema.prisma` + `prisma generate`.
+2. Form-схема: `GeneratedSchema.pick/omit/extend` в `features/X/model/schemas`.
+3. `z.infer<typeof formSchema>`; UI: `useForm({ resolver: zodResolver(formSchema) })`.
+4. Submit → `useMutation` → **HTTP API** (не Prisma).
+5. На сервере: тот же/совместимый Zod → service → Prisma.
+6. Успех → invalidate + `redirect(getRoute…)` / Jotai UI; ошибки API → form/toast.
+
+#### D. Новый экран / роут (страница только показывает)
+
+1. View-слайс `src/views/MyPage/` — композиция UI.
+2. `src/app/.../page.tsx`: **только показать** — импорт view; при RSC-чтении вызвать server-функцию/service и передать props, без логики записи/домена в файле page.
+3. `getRoute*` → `middleware.ts` → Sidebar.
+4. View собирает widgets/features/entities.
+5. При необходимости `loading.tsx` / `error.tsx`.
+
+#### E. Новый shared UI-компонент
+
+1. `src/shared/ui/MyComponent` (Tailwind ± Framer) → `index.ts` → stories.
+2. Без Prisma, без server services, без form-схем фич.
+
+#### F. Клиентский UI-стейт (Jotai)
+
+1. `model/atoms` → `useAtom` только в client UI.
+2. Не дублировать Query cache / данные БД.
+
+#### G. Feature-flag (если нужен)
+
+1. Реестр флагов → `shared/lib/features` → cleanup после раскатки.
+
+#### H. Новая / изменённая модель БД (Prisma → Zod)
+
+1. `schema.prisma` → migrate → `prisma generate`.
+2. Обновить **server service** (Zod parse → Prisma).
+3. Обновить derived form-схемы и client Query/invalidate.
+4. Не править generated; не дублировать схему руками.
+
+#### I. Тяжёлая / долгая задача (отчёт, огромная загрузка)
+
+1. Не выполнять работу целиком внутри обычного HTTP handler.
+2. API: принять запрос → валидация Zod → **поставить job** (пока: заглушка/явный TODO на очередь) → вернуть `jobId` / статус.
+3. Клиент: Query/Mutation на статус job; UI показывает progress/ready.
+4. Позже: воркер/очередь забирает job и пишет результат через Prisma (снова после Zod, если есть вход job payload).
+
+---
+
+### Канонические эталоны для копирования
+
+| Задача | Куда смотреть / куда класть |
+|--------|-----------------------------|
+| Модели БД + base Zod | `prisma/schema.prisma` → `src/shared/generated/zod` |
+| PrismaClient (server) | `src/shared/api/prisma.ts` (+ `server-only`) |
+| Server service (логика + БД) | `src/entities\|features/<X>/server/` или `src/server/` |
+| Тонкий HTTP-вход | `src/app/api/**/route.ts` → service |
+| Entity + client Query | `src/entities/<Entity>/api` + `ui` + `index.ts` |
+| Feature + форма → API | `features/<Feature>/model/schemas` + `api` + `ui` |
+| Экран (только UI) | `src/views/<Page>` + тонкий `app/.../page.tsx` |
+| Widget + atoms | `src/widgets/Sidebar` |
+| Providers | `src/app/providers.tsx` |
+| Роут | `src/app/<segment>/page.tsx` + `getRoute*` + `middleware.ts` |
+| Долгий job | API accept + job status; воркер — later |
+| Shared UI | `src/shared/ui/<Component>` |
+
+---
+
+## Краткая матрица
+
+- **Клиент (кнопки/фичи)** → только TanStack Query → HTTP API.
+- **page.tsx** → только показывает; логика в server services.
+- **route.ts** → тонкий вход в service.
+- **Zod (zod-prisma-types / derived)** → обязательно перед записью в БД.
+- **Prisma / PostgreSQL** → только сервер.
+- **Тяжёлое** → не в обычном HTTP; очередь/воркер (пока — помнить правило).
+- **Jotai** — UI-state; **RHF** — формы; **Tailwind/Framer** — UI.

@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: tyaga
+          POSTGRES_PASSWORD: tyaga
+          POSTGRES_DB: tyaga
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tyaga"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://tyaga:tyaga@localhost:5432/tyaga?schema=public
+      ACCESS_MODE: open
+      AUTH_SECRET: ci-secret-ci-secret-ci-secret-ci
+      RATE_LIMIT_DRIVER: memory
+      BOT_TOKEN: 123456:TESTTOKEN
+      RUN_DB_TESTS: "1"
+      CATEGORY_LIQUID_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
